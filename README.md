@@ -1,4 +1,4 @@
-# slvfe_py — Python port of ERmod's `slvfe`
+# pyslvfe — Python port of ERmod's `slvfe`
 
 A Python port of `ermod-openacc/slvfe` (`slvfe.F90`, `sfemain.F90`,
 `sfecorrect.F90`). The GPU-dependent solvers (cuSolverDn) have been
@@ -64,7 +64,7 @@ caller falls back to the EVD-based solver) is preserved as-is.
 
 ```bash
 cd <directory containing parameters_fe, soln/, refs/>
-python3 main.py
+python3 /PATH/TO/slvfe.py
 ```
 
 As in the original Fortran program, when `clcond = 'basic'` or

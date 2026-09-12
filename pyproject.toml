@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyslvfe"
+version = "0.1.0"
+description = "Python port of ERmod's slvfe solvation free-energy solver (CPU solvers replacing the original cuSolverDn calls)"
+readme = "README.md"
+license = { text = "GPL-2.0-or-later" }
+requires-python = ">=3.8"
+authors = [
+    { name = "The ERmod authors" },
+]
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+# Installed command is `pyslvfe`, not `slvfe`, so it doesn't shadow the
+# original Fortran `slvfe` binary on $PATH. The importable Python
+# package is still named `slvfe` (import slvfe) since there's no
+# executable-name collision risk there.
+[project.scripts]
+pyslvfe = "slvfe.main:main"
+
+[project.urls]
+"Original Fortran project" = "https://github.com/drmaruyama/ermod-openacc"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

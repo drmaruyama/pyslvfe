@@ -4,42 +4,84 @@ A Python port of `ermod-openacc/slvfe` (`slvfe.F90`, `sfemain.F90`,
 `sfecorrect.F90`). The GPU-dependent solvers (cuSolverDn) have been
 replaced with CPU SciPy/LAPACK calls.
 
-## File layout
+## Requirements
 
-| File | Original Fortran module | Contents |
-|---|---|---|
-| `solver.py` | `posv_wrap`, `syevr_wrap` (sfecalc) | **The cuSolverDn → SciPy replacement** |
-| `config.py` | `sysvars` (sfemain.F90) | Reads the `parameters_fe` namelist; internally split into `Config` (scalars) + `RunData` (arrays), exposed as a single flat `SysVars` facade (see docstring in the file) |
-| `reader.py` | `sysread` (slvfe.F90) | `defcond`, `datread` (reading input files) |
-| `sfecalc.py` | `sfecalc` (slvfe.F90) | Numerical core of the chemical-potential calculation (`chmpot`, `getslncv`, `getinscv`, etc.) |
-| `uvcorrect.py` | `uvcorrect` (sfecorrect.F90) | Lennard-Jones long-range correction (used only when `ljlrc = 'yes'`) |
-| `output.py` | `opwrite` (slvfe.F90) | Result output (`wrtresl`, `wrtmerge`, `wrtcumu`) |
-| `main.py` | `program sfemain` | Entry point |
-| `fortran_utils.py` | — | Compatibility helpers for Fortran intrinsics (e.g. `NINT`) |
-| `namelist_parser.py` | — | Self-contained Fortran namelist parser (no external dependency) |
-| `test_smoke.py` | — | Sanity check with synthetic data (no real input files needed) |
-| `test_reader.py` | — | Integration test for `reader.py` (writes small synthetic input files to a temp dir) |
-| `test_namelist_parser.py` | — | Unit tests for `namelist_parser.py` |
+- Python >= 3.8
+- `numpy`, `scipy` (installed automatically by `pip install`, or via
+  `pip install numpy scipy` if you're running the script directly
+  without installing the package)
 
-## Dependencies
+No external namelist-parsing package is required — see
+["Namelist parsing"](#namelist-parsing-parameters_fe--parameters_er)
+below.
 
+## Installation
+
+```bash
+git clone <this repository>
+cd pyslvfe
+pip install .          # or `pip install -e .` for an editable install
 ```
+
+This installs the `pyslvfe` command (see below). The console command is
+named `pyslvfe`, **not** `slvfe`, so it doesn't shadow the original
+Fortran `slvfe` binary on `$PATH`.
+
+If you'd rather not install anything, you can also just install the
+two dependencies and run the top-level script directly (see "Running
+it without installing" below):
+
+```bash
 pip install numpy scipy
 ```
 
-- `numpy` / `scipy`: numerical linear algebra (Cholesky factorization,
-  symmetric eigendecomposition)
+## Usage
 
-Namelist parsing (`parameters_fe`, `parameters_er`) is handled by the
-small, self-contained parser in `namelist_parser.py` — no external
-namelist package is required. It covers what these two files actually
-use: quoted strings, logicals, integers/reals (including Fortran's
-`d`/`D` exponent marker), simple comma-separated arrays, the `n*value`
-repeat shorthand, and `!` comments. It does not implement the full
-Fortran namelist standard (e.g. `arr(2:4) = ...` slice assignment or
-the legacy `$group ... $end` delimiter style), but this is not needed
-by `parameters_fe` / `parameters_er`. See `test_namelist_parser.py` for
-example input/output.
+```bash
+cd <directory containing parameters_fe, soln/, refs/>
+pyslvfe
+```
+
+As in the original Fortran program, when `clcond = 'basic'` or
+`'range'` (in `parameters_fe`), you will be prompted for a few values
+via standard input. `clcond = 'merge'` is the main mode intended for
+automated/batch processing and does not prompt for input.
+
+### Running it without installing
+
+```bash
+cd <directory containing parameters_fe, soln/, refs/>
+python3 /path/to/slvfe.py
+```
+
+`slvfe.py` at the repository root is a thin wrapper that runs the exact
+same code as the `pyslvfe` command, without requiring `pip install`
+first.
+
+### Other ways to run it
+
+```bash
+python -m slvfe          # equivalent to the pyslvfe / slvfe.py above
+```
+
+```python
+# using it as a library from your own script, after `pip install`:
+from slvfe.config import SysVars
+from slvfe.solver import posv_wrap, syevr_wrap
+```
+
+## Namelist parsing (`parameters_fe` / `parameters_er`)
+
+Parsing is handled by the small, self-contained parser in
+`src/slvfe/namelist_parser.py` — no external namelist package is
+required. It covers what these two files actually use: quoted strings,
+logicals, integers/reals (including Fortran's `d`/`D` exponent marker),
+simple comma-separated arrays, the `n*value` repeat shorthand, and `!`
+comments. It does not implement the full Fortran namelist standard
+(e.g. `arr(2:4) = ...` slice assignment or the legacy
+`$group ... $end` delimiter style), but this is not needed by
+`parameters_fe` / `parameters_er`. See `tests/test_namelist_parser.py`
+for example input/output.
 
 ## On precision
 
@@ -60,25 +102,65 @@ that cuSolverDn wraps on the GPU, so there is no GPU-specific behavior
 to reproduce. The meaning of `info` (0 = success, non-zero = failure →
 caller falls back to the EVD-based solver) is preserved as-is.
 
-## Running it
+## Running the tests
 
 ```bash
-cd <directory containing parameters_fe, soln/, refs/>
-python3 /PATH/TO/slvfe.py
+pip install -e ".[dev]"
+pytest
 ```
 
-As in the original Fortran program, when `clcond = 'basic'` or
-`'range'`, you will be prompted for a few values via standard input
-(`input()` calls).
+or, without pytest, each test file can be run directly:
+
+```bash
+python3 tests/test_smoke.py
+python3 tests/test_reader.py
+python3 tests/test_namelist_parser.py
+```
+
+## Repository layout
+
+```
+pyslvfe/
+├── pyproject.toml       # `pip install .` metadata; installs the `pyslvfe` command
+├── slvfe.py             # thin wrapper: run without installing (see "Usage" above)
+├── src/slvfe/           # the actual package (import slvfe / python -m slvfe)
+│   ├── __init__.py
+│   ├── __main__.py       # supports `python -m slvfe`
+│   ├── main.py           # entry point logic (`def main()`), port of `program sfemain`
+│   ├── config.py         # port of `sysvars` (sfemain.F90)
+│   ├── reader.py         # port of `sysread` (slvfe.F90): defcond, datread
+│   ├── sfecalc.py        # port of `sfecalc` (slvfe.F90): the numerical core
+│   ├── solver.py         # cuSolverDn → SciPy/LAPACK replacement (posv_wrap, syevr_wrap)
+│   ├── uvcorrect.py      # port of `uvcorrect` (sfecorrect.F90): LJ long-range correction
+│   ├── output.py         # port of `opwrite` (slvfe.F90): result printing
+│   ├── namelist_parser.py  # self-contained Fortran namelist parser
+│   └── fortran_utils.py    # Fortran-intrinsic compatibility helpers (e.g. NINT)
+└── tests/
+    ├── test_smoke.py            # synthetic-data sanity check (no real input files needed)
+    ├── test_reader.py           # integration test for reader.py (writes temp input files)
+    └── test_namelist_parser.py  # unit tests for namelist_parser.py
+```
+
+| File | Original Fortran module | Contents |
+|---|---|---|
+| `src/slvfe/solver.py` | `posv_wrap`, `syevr_wrap` (sfecalc) | **The cuSolverDn → SciPy replacement** |
+| `src/slvfe/config.py` | `sysvars` (sfemain.F90) | Reads the `parameters_fe` namelist; internally split into `Config` (scalars) + `RunData` (arrays), exposed as a single flat `SysVars` facade (see docstring in the file) |
+| `src/slvfe/reader.py` | `sysread` (slvfe.F90) | `defcond`, `datread` (reading input files) |
+| `src/slvfe/sfecalc.py` | `sfecalc` (slvfe.F90) | Numerical core of the chemical-potential calculation (`chmpot`, `getslncv`, `getinscv`, etc.) |
+| `src/slvfe/uvcorrect.py` | `uvcorrect` (sfecorrect.F90) | Lennard-Jones long-range correction (used only when `ljlrc = 'yes'`) |
+| `src/slvfe/output.py` | `opwrite` (slvfe.F90) | Result output (`wrtresl`, `wrtmerge`, `wrtcumu`) |
+| `src/slvfe/main.py` | `program sfemain` | Entry point logic |
+| `src/slvfe/fortran_utils.py` | — | Compatibility helpers for Fortran intrinsics (e.g. `NINT`) |
+| `src/slvfe/namelist_parser.py` | — | Self-contained Fortran namelist parser (no external dependency) |
 
 ## Porting notes / things worth double-checking
 
 Since no real input data was available while porting, runtime
 verification was limited to a synthetic-data sanity check
-(`test_smoke.py`). **Before using this in production, run it against
-the same input directories as the existing Fortran version and confirm
-the output (especially the "Total solvation free energy" value)
-matches.**
+(`tests/test_smoke.py`). **Before using this in production, run it
+against the same input directories as the existing Fortran version and
+confirm the output (especially the "Total solvation free energy"
+value) matches.**
 
 Points that deserve particular attention:
 
@@ -91,11 +173,12 @@ Points that deserve particular attention:
    (rare), adjust `read_fortran_matrix` accordingly.
 
 2. **Parsing the `parameters_fe` / `parameters_er` namelists**
-   `namelist_parser.py` is a minimal, purpose-built parser (see the
-   "Dependencies" section above for what it covers). If your namelist
-   files use syntax it doesn't handle (e.g. `arr(2:4) = ...` slice
-   assignment), either extend the parser or verify the parsed values
-   with `namelist_parser.read_namelist(path)`.
+   `namelist_parser.py` is a minimal, purpose-built parser (see
+   ["Namelist parsing"](#namelist-parsing-parameters_fe--parameters_er)
+   above for what it covers). If your namelist files use syntax it
+   doesn't handle (e.g. `arr(2:4) = ...` slice assignment), either
+   extend the parser or verify the parsed values with
+   `namelist_parser.read_namelist(path)`.
 
 3. **Output formatting (column widths, etc.)**
    `output.py` reproduces the Fortran `write` format specifiers
@@ -141,3 +224,11 @@ Points that deserve particular attention:
    `syevr_wrap` code paths.
 3. Also separately verify the `slncor = 'yes'` case (which exercises
    the `edscr`/`sdrcv` code path).
+
+## License
+
+This is a derivative work of ERmod (`https://github.com/drmaruyama/ermod-openacc`),
+which is GPL-2.0-or-later. If you distribute this port, include a
+`LICENSE` file with the GPL text (e.g. from
+`https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt`) and a short
+note pointing back to the original project.

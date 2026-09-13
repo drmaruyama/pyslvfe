@@ -15,13 +15,22 @@ and the `soln/`, `refs/` data files described by those namelists.
 """
 from __future__ import annotations
 
+import sys
+
 from .config import SysVars
+from .exceptions import SlvfeError
 from .reader import defcond, datread
 from .sfecalc import SfeCalcState, chmpot
 from .output import OutputState, wrtresl
 
 
-def main() -> None:
+def run() -> None:
+    """The actual computation, as a plain function that raises
+    `SlvfeError` on user-facing/data errors (bad input, inconsistent
+    parameters, ...). Library users should call this directly and
+    catch `SlvfeError` themselves; `main()` below is the CLI wrapper
+    that instead prints a clean message and exits.
+    """
     sv = SysVars()
     sv.init_sysvars()
     defcond(sv)
@@ -34,3 +43,18 @@ def main() -> None:
 
     ost = OutputState()
     wrtresl(sv, ost)
+
+
+def main() -> None:
+    """CLI entry point (`pyslvfe`, `python -m slvfe`, `python slvfe.py`).
+
+    Catches `SlvfeError` and prints a one-line message instead of a
+    full traceback -- matching the behavior of the Fortran original's
+    `stop 'message'`, and of this port's own earlier
+    `raise SystemExit(...)`-based error handling.
+    """
+    try:
+        run()
+    except SlvfeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -30,7 +30,8 @@ from scipy import sparse
 from .config import SysVars
 from .fortran_utils import nint
 from .solver import posv_wrap, syevr_wrap
-from .uvcorrect import ljcorrect
+from .uvcorrect import ljcorrect, LJState
+from .exceptions import SlvfeError
 
 
 class System(IntEnum):
@@ -74,6 +75,8 @@ class SfeCalcState:
     invmtrx_first_time: bool = True
     # Fortran `real, allocatable, save :: cumsfe(:,:)` in chmpot
     cumsfe: Optional[np.ndarray] = None
+    # Fortran `uvcorrect` module's SAVE variables (see uvcorrect.ljcorrect)
+    lj_state: LJState = field(default_factory=LJState)
 
 
 # ---------------------------------------------------------------------
@@ -107,7 +110,7 @@ def wgtdst(sv: SysVars, cs: SfeCalcState, iduv: int, system: System,
         return fref
 
     if system == System.REFERENCE and systype in ('slncv', 'extsl'):
-        raise SystemExit(' Bug in the program')
+        raise SlvfeError(' Bug in the program')
 
     if wgttype == 'smpl':
         # System.REFERENCE + 'smpl' was already handled by
@@ -139,7 +142,7 @@ def getwght(sv: SysVars, cs: SfeCalcState, pti: int, system: System,
     if ampl > sv.zero:
         weight = weight / ampl
     else:
-        raise SystemExit(f' Zero weight at {pti + 1}')
+        raise SlvfeError(f' Zero weight at {pti + 1}')
     return weight
 
 
@@ -162,7 +165,7 @@ def cvfcen(sv: SysVars, cs: SfeCalcState, pti: int, system: System,
         errtag = True
         vals = None
     if errtag:
-        raise SystemExit(' Bug in the program')
+        raise SlvfeError(' Bug in the program')
     return float(np.sum(vals[mask] * weight[mask]))
 
 
@@ -196,9 +199,9 @@ def zeroec(sv: SysVars, cs: SfeCalcState, pti: int, system: System) -> int:
                     lcsln, lcref = cs.edens[iduv], cs.edens[iduv + 1]
                 k = iduv if lcsln >= lcref else iduv + 1
             else:
-                raise SystemExit('Bug in the program')
+                raise SlvfeError('Bug in the program')
     if k is None:
-        raise SystemExit(
+        raise SlvfeError(
             f"zeroec: no bin found where the solute-solvent energy "
             f"coordinate changes sign for species {pti + 1} "
             f"(mesh too coarse for this grouping?)"
@@ -222,11 +225,11 @@ def thnc(sv: SysVars, indpmf: float, et: float, system: System) -> float:
             factor = 0.0
         intg = factor / 2.0
     else:
-        raise SystemExit("Incorrct cnt argument in thnc")
+        raise SlvfeError("Incorrct cnt argument in thnc")
     return intg
 
 
-def pyhnc(sv: SysVars, indpmf: float, system: 'System | int') -> float:
+def pyhnc(sv: SysVars, indpmf: float, system: System | int) -> float:
     """``system`` is usually a `System` member, but also accepts the
     literal `PYHNC_INDIRECT` (3) for the sdrcv-based special case used
     in `chmpot` (see module docstring)."""
@@ -246,7 +249,7 @@ def pyhnc(sv: SysVars, indpmf: float, system: 'System | int') -> float:
         else:
             intg = -factor / 2.0
     else:
-        raise SystemExit("Incorrct cnt argument in pyhnc")
+        raise SlvfeError("Incorrct cnt argument in pyhnc")
     return intg
 
 
@@ -315,26 +318,37 @@ def distnorm(sv: SysVars, cs: SfeCalcState) -> None:
             errtmp = sv.norm_error + 1.0
             itrcnt = 0
             correc = np.ones(cs.gemax, dtype=np.float64)
-            while errtmp > sv.norm_error and itrcnt <= sv.itrmax:
-                lcsln_total = np.zeros(cs.gemax, dtype=np.float64)
-                for pti in range(sv.numslv):
-                    mask = cs.uvspec == pti
-                    ampl = correc[mask] @ edmcr[mask, :]
-                    contrib = np.where(ampl > sv.zero,
-                                        sv.nummol[pti] / np.where(ampl > sv.zero, ampl, 1.0),
-                                        0.0)
-                    lcsln_total += contrib
-                lcsln_total /= sv.numslv
-                correc = lcsln_total * edhst
-                edmcr = edmcr * np.outer(correc, correc)
-                sel = edhst > sv.zero
-                errtmp = np.max(np.abs(correc[sel] - 1.0)) if np.any(sel) else 0.0
-                itrcnt += 1
-                if itrcnt >= sv.itrmax:
-                    raise SystemExit(
-                        ' The optimization of the correlation matrix\n'
-                        f'  did not converge with an error of {errtmp}'
-                    )
+            # `ampl = correc[mask] @ edmcr[mask, :]` is a BLAS matrix-vector
+            # product; some optimized BLAS builds can leave the CPU's
+            # "divide by zero" floating-point flag set afterwards (e.g. via
+            # internal approximate-reciprocal SIMD instructions), which
+            # NumPy then reports at the *next* floating-point operation --
+            # here, the division just below -- even though that division is
+            # already guarded (`np.where(ampl > sv.zero, ampl, 1.0)` never
+            # lets a zero reach the denominator). This block suppresses
+            # that known-spurious warning; it does not change any computed
+            # value.
+            with np.errstate(divide='ignore', invalid='ignore'):
+                while errtmp > sv.norm_error and itrcnt <= sv.itrmax:
+                    lcsln_total = np.zeros(cs.gemax, dtype=np.float64)
+                    for pti in range(sv.numslv):
+                        mask = cs.uvspec == pti
+                        ampl = correc[mask] @ edmcr[mask, :]
+                        contrib = np.where(ampl > sv.zero,
+                                            sv.nummol[pti] / np.where(ampl > sv.zero, ampl, 1.0),
+                                            0.0)
+                        lcsln_total += contrib
+                    lcsln_total /= sv.numslv
+                    correc = lcsln_total * edhst
+                    edmcr = edmcr * np.outer(correc, correc)
+                    sel = edhst > sv.zero
+                    errtmp = np.max(np.abs(correc[sel] - 1.0)) if np.any(sel) else 0.0
+                    itrcnt += 1
+                    if itrcnt >= sv.itrmax:
+                        raise SlvfeError(
+                            ' The optimization of the correlation matrix\n'
+                            f'  did not converge with an error of {errtmp}'
+                        )
 
         if system == System.SOLUTION:
             cs.edist[:] = edhst
@@ -467,13 +481,13 @@ def getslncv(sv: SysVars, cs: SfeCalcState) -> None:
             elif (not ext_target[m]) and ext_target[k]:
                 j = k
             else:
-                raise SystemExit(f"Extrapolation is not possible at {cs.uvcrd[iduv]}")
+                raise SlvfeError(f"Extrapolation is not possible at {cs.uvcrd[iduv]}")
 
             work = np.zeros(gemax, dtype=np.float64)
             for iduvp in range(gemax):
                 if cs.uvspec[iduvp] == pti and ext_target[iduvp]:
                     if iduvp == iduv:
-                        raise SystemExit(' A bug in program or data')
+                        raise SlvfeError(' A bug in program or data')
                     factor = cs.uvcrd[iduvp] - cs.uvcrd[j]
                     if iduvp < iduv:
                         factor = -factor - 2.0 * (cs.uvcrd[j] - cs.uvcrd[iduv])
@@ -496,7 +510,7 @@ def getslncv(sv: SysVars, cs: SfeCalcState) -> None:
         try:
             cvzero = _SLNCV_ZEROSHIFT[sv.zerosft](sv, cs, pti)
         except KeyError:
-            raise SystemExit(' zerosft not properly set ')
+            raise SlvfeError(' zerosft not properly set ')
         mask = cs.uvspec == pti
         slncv[mask] -= cvzero
         cs.zrsln[pti] = cvzero
@@ -622,7 +636,7 @@ def getinscv(sv: SysVars, cs: SfeCalcState) -> None:
         if invmtrx_cnt == 'evd':
             eigval, eigvec, evd_info = syevr_wrap(edmcr)
             if evd_info != 0:
-                raise SystemExit("Failed inversion of correlation matrix")
+                raise SlvfeError("Failed inversion of correlation matrix")
             pos = edvec > sv.zero
             work = np.zeros(cs.gemax, dtype=np.float64)
             pti0 = sv.numslv  # first `numslv` eigenvalues skipped (0-based start index)
@@ -648,7 +662,7 @@ def getinscv(sv: SysVars, cs: SfeCalcState) -> None:
             try:
                 cvzero = _PMF_ZEROSHIFT[sv.zerosft](sv, cs, pti, system, zerouv)
             except KeyError:
-                raise SystemExit(' zerosft not properly set ')
+                raise SlvfeError(' zerosft not properly set ')
             mask = cs.uvspec == pti
             arrs.target[mask] -= cvzero
             arrs.zeroshift[pti] = cvzero
@@ -686,7 +700,7 @@ def chmpot(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
         k2 = np.minimum(local // group, m - 1)
         idrduv[cnt0:cnt0 + rmax] = j + k2
     if int(rduvmax_cum[-1]) != ermax:
-        raise SystemExit(
+        raise SlvfeError(
             f"Error: The total no. of meshes does not match with input "
             f"(Sum should be {ermax} but was {int(rduvmax_cum[-1])})"
         )
@@ -741,10 +755,10 @@ def chmpot(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
             mask = cs.uvspec == pti
             sv.aveuv[pti] = np.sum(cs.uvcrd[mask] * cs.edist[mask])
         if sv.ljlrc == 'yes':
-            ljcorrect(sv, cntrun)
+            ljcorrect(sv, cs.lj_state, cntrun)
     else:
         if prmcnt == 1 and sv.ljlrc == 'yes':
-            ljcorrect(sv, cntrun)
+            ljcorrect(sv, cs.lj_state, cntrun)
 
     cumu_process = (sv.cumuint == 'yes' and group == sv.pickgr and inft == 0)
     if cumu_process and cntrun == 1:
@@ -758,7 +772,7 @@ def chmpot(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
     try:
         functional_fn = FUNCTIONAL_TABLE[sv.functional.lower()]
     except KeyError:
-        raise SystemExit("Incorrct functional")
+        raise SlvfeError("Incorrct functional")
 
     for pti in range(numslv):
         uvpot = 0.0

@@ -19,6 +19,7 @@ from typing import Optional
 import numpy as np
 
 from .config import SysVars
+from .exceptions import SlvfeError
 from .namelist_parser import read_namelist
 
 SOLUTE_FILE = 'SltInfo'
@@ -38,7 +39,7 @@ _PI = math.pi
 
 
 @dataclass
-class _LJState:
+class LJState:
     first_time: bool = True
     ljcorr: Optional[np.ndarray] = None
 
@@ -73,12 +74,18 @@ class _LJState:
     attC: float = 0.0
 
 
-_state = _LJState()
+def ljcorrect(sv: SysVars, st: LJState, cntrun: int) -> None:
+    """Port of `ljcorrect`. ``cntrun`` is 1-based.
 
-
-def ljcorrect(sv: SysVars, cntrun: int) -> None:
-    """Port of `ljcorrect`. ``cntrun`` is 1-based."""
-    st = _state
+    ``st`` holds the state that the Fortran original kept in ``SAVE``
+    variables (computed once, on the first call, and reused after
+    that). It is owned by the caller's `SfeCalcState` (see
+    `sfecalc.SfeCalcState.lj_state`) rather than a module-level global,
+    so that running this package's pipeline more than once in the same
+    Python process (e.g. from a test suite, or a script that processes
+    several independent systems in a loop) doesn't silently reuse a
+    previous, unrelated run's LJ correction.
+    """
     numslv = sv.numslv
     if st.first_time:
         _set_keyparam(sv, st)
@@ -103,12 +110,12 @@ def ljcorrect(sv: SysVars, cntrun: int) -> None:
         sv.blockuv[0, cntrun - 1] += st.ljcorr[:numslv].sum()
 
 
-def _set_keyparam(sv: SysVars, st: _LJState) -> None:
+def _set_keyparam(sv: SysVars, st: LJState) -> None:
     volm_min = 1.40e4
 
     keyfile = Path(sv.refsdirec) / ENE_CONFNAME
     if not keyfile.exists():
-        raise SystemExit("The parameters_er file is not found in the refs directory")
+        raise SlvfeError("The parameters_er file is not found in the refs directory")
 
     nml = read_namelist(str(keyfile))
     p = nml.get('ene_param', {})
@@ -131,7 +138,7 @@ def _set_keyparam(sv: SysVars, st: _LJState) -> None:
         sv.avevolume = float(input())
 
 
-def _get_ljtable(sv: SysVars, st: _LJState) -> None:
+def _get_ljtable(sv: SysVars, st: LJState) -> None:
     numslv = sv.numslv
     refsdirec = Path(sv.refsdirec)
 
@@ -171,7 +178,7 @@ def _get_ljtable(sv: SysVars, st: _LJState) -> None:
                 elif len(parts) >= 5:
                     xst2, xst3 = float(parts[3]), float(parts[4])
                 else:
-                    raise SystemExit(f"Cannot parse molfile line: {linebuf!r}")
+                    raise SlvfeError(f"Cannot parse molfile line: {linebuf!r}")
 
                 if st.ljformat == LJFMT_EPS_Rminh:
                     xst3 = _SGMCNV * xst3
@@ -241,13 +248,13 @@ def _get_ljtable(sv: SysVars, st: _LJState) -> None:
             elif st.cmbrule == LJCMB_GEOM:
                 ljlensq_mat[:, i] = lens * lens[i]
             else:
-                raise SystemExit("Incorrect cmbrule")
+                raise SlvfeError("Incorrect cmbrule")
             ljene_mat[:, i] = np.sqrt(engs * engs[i])
         st.ljlensq_mat = ljlensq_mat
         st.ljene_mat = ljene_mat
 
 
-def _calc_ljlrc(sv: SysVars, st: _LJState, pti: int) -> float:
+def _calc_ljlrc(sv: SysVars, st: LJState, pti: int) -> float:
     """``pti`` is 0-based (solvent species index)."""
     dens = sv.nummol[pti] / sv.avevolume
     correction = 0.0
@@ -259,10 +266,10 @@ def _calc_ljlrc(sv: SysVars, st: _LJState, pti: int) -> float:
     return correction
 
 
-def _enelj(st: _LJState, ljeps: float, ljsgm2: float) -> float:
+def _enelj(st: LJState, ljeps: float, ljsgm2: float) -> float:
     if st.enelj_first_time:
         if st.lwljcut > st.upljcut:
-            raise SystemExit(
+            raise SlvfeError(
                 "Incorrect setting of lwljcut and upljcut (lwljcut > upljcut)")
         st.numbin = round((st.upljcut - st.lwljcut) / st.rbin)
         if st.numbin >= 1:
@@ -302,7 +309,7 @@ def _enelj(st: _LJState, ljeps: float, ljsgm2: float) -> float:
         edev = 4.0 * ljeps * (vdwa - vdwb)
         ljint += (4.0 * _PI / 3.0) * st.lwljcut3 * edev
     else:
-        raise SystemExit("Unknown ljswitch")
+        raise SlvfeError("Unknown ljswitch")
 
     # lwljcut < r < upljcut
     if st.do_swth:
@@ -336,7 +343,7 @@ def _enelj(st: _LJState, ljeps: float, ljsgm2: float) -> float:
                                   + st.attC)
                 edev = 4.0 * ljeps * (vdwa - vdwb)
             else:
-                raise SystemExit("Unknown ljswitch")
+                raise SlvfeError("Unknown ljswitch")
             ljint += 4.0 * _PI * r * r * st.rbin * edev
 
     # r > upljcut

@@ -29,6 +29,7 @@ from typing import Optional
 
 import numpy as np
 
+from .exceptions import SlvfeError
 from .namelist_parser import read_namelist
 
 
@@ -189,7 +190,7 @@ class Config:
 
             if self.refmerge == 'not':
                 if self.numdiv > self.numref:
-                    raise SystemExit(
+                    raise SlvfeError(
                         "With refmerge = 'not', numdiv needs to be not "
                         "larger than numref"
                     )
@@ -204,11 +205,11 @@ class Config:
                             else self.numprm_def_inf_not)
 
         if self.pickgr < self.msemin:
-            raise SystemExit(" Incorrect setting: pickgr < msemin not allowed")
+            raise SlvfeError(" Incorrect setting: pickgr < msemin not allowed")
         if self.pickgr > self.msemax:
-            raise SystemExit(" Incorrect setting: pickgr > msemax not allowed")
+            raise SlvfeError(" Incorrect setting: pickgr > msemax not allowed")
         if self.pickgr > self.numprm:
-            raise SystemExit(" Incorrect setting: pickgr > numprm not allowed")
+            raise SlvfeError(" Incorrect setting: pickgr > numprm not allowed")
 
         if self.et != 0.0:
             self.functional = 'thnc'
@@ -225,7 +226,7 @@ class Config:
             for count_suf in range(1, sufmax + 1):
                 opnfile2 = Path(dirname) / f"{trunk}.{self.get_suffix(count_suf)}"
                 if opnfile2.exists():
-                    raise SystemExit(
+                    raise SlvfeError(
                         f"{trunk}.tt is not supposed to coexist with "
                         f"{trunk}.01, {trunk}.02, ..."
                     )
@@ -238,7 +239,7 @@ class Config:
                 nfiles = count_suf
             else:
                 if count_suf == 1:
-                    raise SystemExit(
+                    raise SlvfeError(
                         f"Neither {trunk}.01 nor {trunk}.tt exists. Perhaps "
                         f"{dirname} part is not calculated yet?"
                     )

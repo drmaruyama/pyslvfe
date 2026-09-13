@@ -100,7 +100,6 @@ def wrtresl(sv: SysVars, ost: OutputState) -> None:
 def wrtmerge(sv: SysVars, ost: OutputState) -> None:
     numslv = sv.numslv
     numrun = sv.numrun
-    showcp = np.zeros(numrun, dtype=np.float64)
 
     if sv.uvread != 'not':
         wrtdata = sv.blockuv[:numslv + 1, :numrun].copy()

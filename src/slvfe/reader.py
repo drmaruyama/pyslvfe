@@ -22,6 +22,7 @@ import numpy as np
 from scipy.io import FortranFile
 
 from .config import SysVars
+from .exceptions import SlvfeError
 
 
 def read_fortran_matrix(path: str, n: int) -> np.ndarray:
@@ -42,7 +43,7 @@ def defcond(sv: SysVars) -> None:
     the group/inft parameter grid; read aveuv / weights / self-energy."""
 
     if sv.clcond not in ('basic', 'range', 'merge'):
-        raise SystemExit(' The clcond parameter is incorrect')
+        raise SlvfeError(' The clcond parameter is incorrect')
 
     if sv.clcond in ('basic', 'range'):
         sv.engfile[0] = input(" What is the energy distribution in solution?\n")
@@ -124,7 +125,7 @@ def defcond(sv: SysVars) -> None:
                 k = pti
             else:
                 if sv.rduvmax[pti] < 1:
-                    raise SystemExit("Bug in counting rduvmax")
+                    raise SlvfeError("Bug in counting rduvmax")
                 sv.rduvmax[pti] += 1
                 crddif_now = crdnow - crdprev
                 if sv.rduvmax[pti] > 2:
@@ -150,9 +151,9 @@ def defcond(sv: SysVars) -> None:
                         break
 
     if int(sv.rduvmax.sum()) != ermax:
-        raise SystemExit(' The file format is incorrect')
+        raise SlvfeError(' The file format is incorrect')
     if ermax > sv.ermax_limit:
-        raise SystemExit(' The number of energy bins is too large')
+        raise SlvfeError(' The number of energy bins is too large')
 
     # --- group / inft parameter grid ---
     if sv.clcond == 'basic':
@@ -228,11 +229,11 @@ def defcond(sv: SysVars) -> None:
             sv.slfeng = float(input(" What is the solute self-energy?\n"))
         else:  # merge
             if sv.readwgtfl == 'not':
-                raise SystemExit("readwgtfl needs to be yes when slfslt is yes")
+                raise SlvfeError("readwgtfl needs to be yes when slfslt is yes")
             sv.slfeng = 0.0
             opnfile2 = Path(sv.refsdirec) / sv.wgtreffl
             if not opnfile2.exists():
-                raise SystemExit(" weight_refs is absent although slfslt is set to yes")
+                raise SlvfeError(" weight_refs is absent although slfslt is set to yes")
             with open(opnfile2) as f:
                 for i in range(sv.maxref):
                     line = f.readline()
@@ -297,7 +298,7 @@ def _read_1d_distribution(sv: SysVars, job: _ReadJob, opnfile: Path, i: int,
                 sv.rdcrd[iduv] = crdnow
                 bin_check[iduv] = leftbin
             elif bin_check[iduv] != leftbin:
-                raise SystemExit(
+                raise SlvfeError(
                     "Solution and reference system energy "
                     "coordinates are inconsitent"
                 )
@@ -387,7 +388,7 @@ def datread(sv: SysVars, cntrun: int) -> None:
             if round(ampl) != round(sv.nummol[pti]):
                 num_different = True
         if num_different:
-            raise SystemExit(f'  Incorrect normalization at {pti + 1}')
+            raise SlvfeError(f'  Incorrect normalization at {pti + 1}')
         if cntrun == 1:
             sv.nummol[pti] = round(factor)
             print(f'  Number of the {pti + 1:3d}-th solvent  = {int(round(sv.nummol[pti])):12d}')

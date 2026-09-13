@@ -134,7 +134,8 @@ pyslvfe/
 │   ├── uvcorrect.py      # port of `uvcorrect` (sfecorrect.F90): LJ long-range correction
 │   ├── output.py         # port of `opwrite` (slvfe.F90): result printing
 │   ├── namelist_parser.py  # self-contained Fortran namelist parser
-│   └── fortran_utils.py    # Fortran-intrinsic compatibility helpers (e.g. NINT)
+│   ├── fortran_utils.py    # Fortran-intrinsic compatibility helpers (e.g. NINT)
+│   └── exceptions.py       # SlvfeError (see "Error handling" above)
 └── tests/
     ├── test_smoke.py            # synthetic-data sanity check (no real input files needed)
     ├── test_reader.py           # integration test for reader.py (writes temp input files)
@@ -152,6 +153,19 @@ pyslvfe/
 | `src/slvfe/main.py` | `program sfemain` | Entry point logic |
 | `src/slvfe/fortran_utils.py` | — | Compatibility helpers for Fortran intrinsics (e.g. `NINT`) |
 | `src/slvfe/namelist_parser.py` | — | Self-contained Fortran namelist parser (no external dependency) |
+| `src/slvfe/exceptions.py` | — | `SlvfeError`, a normal (catchable) exception used for all user-facing/data errors — see "Error handling" below |
+
+## Error handling
+
+All user-facing/data errors (bad or inconsistent input files,
+unsupported parameter combinations, numerical failures, ...) are
+raised as `slvfe.exceptions.SlvfeError`, a normal, catchable
+`Exception` subclass. If you use this package as a library (rather
+than through the `pyslvfe` command), catch `SlvfeError` (or
+`Exception`) around calls into it. The CLI entry point (`main()` in
+`src/slvfe/main.py`) catches `SlvfeError` itself and prints a one-line
+`Error: ...` message to stderr with exit code 1, instead of a Python
+traceback.
 
 ## Porting notes / things worth double-checking
 

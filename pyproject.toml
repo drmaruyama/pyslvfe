@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyslvfe"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Python port of ERmod's slvfe solvation free-energy solver (CPU solvers replacing the original cuSolverDn calls)"
 readme = "README.md"
 license = { text = "GPL-2.0-or-later" }
 requires-python = ">=3.8"
 authors = [
-    { name = "The ERmod authors" },
+    { name = "Yutaka Maruyama" },
 ]
 dependencies = [
     "numpy>=1.23",
@@ -32,6 +32,11 @@ pyslvfe = "slvfe.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Single source of truth for the version number: src/slvfe/__init__.py's
+# __version__, instead of duplicating it here too.
+[tool.setuptools.dynamic]
+version = { attr = "slvfe.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

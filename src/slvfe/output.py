@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -226,8 +226,6 @@ def wrtcumu(sv: SysVars, ost: OutputState, wrtdata: np.ndarray) -> float:
         for pti in range(4, numslv + 1):
             if pti < 10:
                 header += f"         {pti}th component"
-            elif pti < 100:
-                header += f"        {pti}th component"
             else:
                 header += f"        {pti}th component"
         print(header)

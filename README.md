@@ -83,6 +83,25 @@ comments. It does not implement the full Fortran namelist standard
 `parameters_fe` / `parameters_er`. See `tests/test_namelist_parser.py`
 for example input/output.
 
+### Yes/no namelist flags
+
+The Fortran original represents many on/off settings as `CHARACTER`
+values (`uvread = 'yes'` / `'not'`) rather than `LOGICAL`. In
+`parameters_fe` files, nothing changes -- keep writing `uvread = 'yes'`,
+`slncor = 'not'`, etc. Internally, though, `Config.init_sysvars`
+(`config.py`) converts the 13 fields that are genuinely two-valued
+(`uvread`, `slfslt`, `ljlrc`, `infchk`, `meshread`, `cumuint`, `slncor`,
+`refmerge`, `readwgtfl`, `wrtzrsft`, `wgtf2smpl`, `normalize`,
+`showdst`) into plain Python `bool`s, so the rest of the codebase reads
+`if sv.slncor:` rather than `if sv.slncor == 'yes':`. Fields with more
+than two possible values (`clcond`, `zerosft`, `wgtfnform`, `invmtrx`,
+`functional`, `extsln`, and the three-valued `write_mesherror`) are
+untouched and remain plain strings. If you're setting these fields
+directly in Python (e.g. in a script or a test, rather than via a
+namelist file), use `True`/`False` for the 13 above, not `'yes'`/`'not'`
+-- a non-empty string like `'not'` is truthy in Python and would be
+silently treated as "on".
+
 ## On precision
 
 The original Fortran code was compiled with a flag (e.g. `-r8`) that
@@ -102,6 +121,33 @@ that cuSolverDn wraps on the GPU, so there is no GPU-specific behavior
 to reproduce. The meaning of `info` (0 = success, non-zero = failure →
 caller falls back to the EVD-based solver) is preserved as-is.
 
+## Internal design notes
+
+A few patterns recur across the codebase, useful to know before
+reading or extending it:
+
+- **`System` enum** (`sfecalc.py`) replaces the Fortran `cnt` flag
+  (1 = solution, 2 = reference solvent) used throughout the numerical
+  core.
+- **`FUNCTIONAL_TABLE`** (`sfecalc.py`) maps the `functional` namelist
+  string to a small function computing that closure's contribution,
+  rather than re-testing `functional` inside the per-bin loop.
+- **`_ReadJob`** (`reader.py`) describes one of the four file types
+  `datread` reads (engsln/corsln/engref/corref) as data rather than as
+  a branch on an integer flag.
+- **`SfeCalcState`** (`sfecalc.py`) holds everything that used to be a
+  Fortran `SAVE` (persistent-across-calls) variable -- including
+  `lj_state` (the LJ-correction module's own persistent state, see
+  `uvcorrect.LJState`) and `invmtrx_first_time`. A fresh
+  `SfeCalcState()` per run (see `main.py`) means running this package's
+  pipeline more than once in the same Python process doesn't leak
+  state between runs.
+- Long functions carried over from Fortran subroutines (`chmpot`,
+  `getslncv`, `getinscv`, `defcond`, `datread`, `wrtresl`, `wrtmerge`,
+  `_get_ljtable`) have been broken into single-purpose helper functions
+  (prefixed `_` where private to their module) to keep each piece
+  readable and independently testable.
+
 ## Running the tests
 
 ```bash
@@ -114,6 +160,7 @@ or, without pytest, each test file can be run directly:
 ```bash
 python3 tests/test_smoke.py
 python3 tests/test_reader.py
+python3 tests/test_uvcorrect.py
 python3 tests/test_namelist_parser.py
 ```
 
@@ -139,6 +186,7 @@ pyslvfe/
 └── tests/
     ├── test_smoke.py            # synthetic-data sanity check (no real input files needed)
     ├── test_reader.py           # integration test for reader.py (writes temp input files)
+    ├── test_uvcorrect.py        # integration test for the LJ long-range correction
     └── test_namelist_parser.py  # unit tests for namelist_parser.py
 ```
 

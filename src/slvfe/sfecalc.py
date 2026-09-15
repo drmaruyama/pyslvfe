@@ -673,18 +673,20 @@ def _solve_via_cholesky_or_regularization(sv: SysVars, cs: SfeCalcState, system:
             edmcr_inv[k, k] = 1.0
             work[k] = 0.0
     else:  # regularization
-        regfac = np.zeros(sv.numslv, dtype=np.float64)
-        regcnt = np.zeros(sv.numslv, dtype=np.float64)
         pos = edvec > sv.zero
-        for iduv in np.nonzero(pos)[0]:
-            pti = cs.uvspec[iduv]
-            regfac[pti] += edmcr[iduv, iduv]
-            regcnt[pti] += 1.0
+        diag = np.diag(edmcr)
+        regfac = np.bincount(cs.uvspec[pos], weights=diag[pos], minlength=sv.numslv)
+        regcnt = np.bincount(cs.uvspec[pos], minlength=sv.numslv).astype(np.float64)
         regfac = regfac / regcnt / regcnt
-        for iduv in np.nonzero(pos)[0]:
-            pti = cs.uvspec[iduv]
-            sel = (cs.uvspec == pti) & pos
-            edmcr_inv[sel, iduv] += regfac[pti]
+        # Adds regfac[species] to every (row, col) pair within the same
+        # species where both are "sampled" (pos). This is the fully
+        # vectorized form of:
+        #     for iduv where pos:
+        #         for iduvp where uvspec[iduvp] == uvspec[iduv] and pos[iduvp]:
+        #             edmcr_inv[iduvp, iduv] += regfac[uvspec[iduv]]
+        same_species = cs.uvspec[:, None] == cs.uvspec[None, :]
+        both_pos = pos[:, None] & pos[None, :]
+        edmcr_inv += np.where(same_species & both_pos, regfac[cs.uvspec][None, :], 0.0)
 
     x, inv_info = posv_wrap(edmcr_inv, work)
     if inv_info == 0:

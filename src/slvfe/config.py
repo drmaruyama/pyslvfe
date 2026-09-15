@@ -49,27 +49,27 @@ class Config:
     """
     # ---- namelist parameters ----
     clcond: str = 'merge'
-    uvread: str = 'yes'
-    slfslt: str = 'yes'
-    ljlrc: str = 'not'
-    infchk: str = 'not'
-    meshread: str = 'not'
-    cumuint: str = 'not'
-    write_mesherror: str = 'cnd'
+    uvread: bool = True
+    slfslt: bool = True
+    ljlrc: bool = False
+    infchk: bool = False
+    meshread: bool = False
+    cumuint: bool = False
+    write_mesherror: str = 'cnd'   # 'cnd' / 'yes' / 'not' -- 3-valued, not a plain flag
 
     extsln: str = 'lin'
-    slncor: str = 'not'
-    refmerge: str = 'yes'
-    readwgtfl: str = 'yes'
+    slncor: bool = False
+    refmerge: bool = True
+    readwgtfl: bool = True
 
     invmtrx: str = 'reg'
     zerosft: str = 'eczr'
-    wrtzrsft: str = 'not'
+    wrtzrsft: bool = False
     wgtfnform: str = 'harm'
-    wgtf2smpl: str = 'yes'
+    wgtf2smpl: bool = True
 
-    normalize: str = 'yes'
-    showdst: str = 'not'
+    normalize: bool = True
+    showdst: bool = False
 
     functional: str = 'pyhnc'
 
@@ -135,6 +135,16 @@ class Config:
     suffix_of_engsln_is_tt: bool = False
     suffix_of_engref_is_tt: bool = False
 
+    # Namelist keys that are Fortran CHARACTER "yes"/"not" flags, mapped
+    # onto real Python `bool` fields here. `parameters_fe` files keep
+    # writing `uvread = 'yes'`, etc. -- only the in-memory
+    # representation changes.
+    _YES_NOT_FIELDS = frozenset({
+        'uvread', 'slfslt', 'ljlrc', 'infchk', 'meshread', 'cumuint',
+        'slncor', 'refmerge', 'readwgtfl', 'wrtzrsft', 'wgtf2smpl',
+        'normalize', 'showdst',
+    })
+
     # ------------------------------------------------------------------
     def get_suffix(self, n: int, suffix_is_tt: bool = False) -> str:
         """Port of `get_suffix` in sfemain.F90."""
@@ -151,6 +161,8 @@ class Config:
             if 'fevars' in nml:
                 for key, value in nml['fevars'].items():
                     if hasattr(self, key):
+                        if key in self._YES_NOT_FIELDS and isinstance(value, str):
+                            value = (value == 'yes')
                         setattr(self, key, value)
                     else:
                         # Silently ignore unknown/unused namelist keys
@@ -188,7 +200,7 @@ class Config:
                         break
                 self.numdiv = i
 
-            if self.refmerge == 'not':
+            if not self.refmerge:
                 if self.numdiv > self.numref:
                     raise SlvfeError(
                         "With refmerge = 'not', numdiv needs to be not "
@@ -201,7 +213,7 @@ class Config:
                     self.numref = kept
 
         if self.numprm <= 0:
-            self.numprm = (self.numprm_def_inf_yes if self.infchk == 'yes'
+            self.numprm = (self.numprm_def_inf_yes if self.infchk
                             else self.numprm_def_inf_not)
 
         if self.pickgr < self.msemin:

@@ -23,11 +23,11 @@ def _print_solvation_energy_basic_range(sv: SysVars) -> None:
     solvent energy and total solvation energy, before any free-energy
     results."""
     print()
-    if sv.numslv > 1 and sv.uvread == 'not':
+    if sv.numslv > 1 and not sv.uvread:
         print('  Solute-solvent energy       =   '
               + ''.join(f'{v:12.4f}' for v in sv.aveuv))
     totuv = sv.aveuv.sum()
-    if sv.slfslt == 'yes':
+    if sv.slfslt:
         totuv += sv.slfeng
     print(f"  Total solvation energy      =   {totuv:12.4f}  kcal/mol")
 
@@ -63,7 +63,7 @@ def _print_range_table(sv: SysVars, ost: OutputState) -> None:
     k_range = [0] if sv.numslv == 1 else list(range(0, sv.numslv + 1))
     for pti in k_range:
         print()
-        if sv.infchk == 'yes':
+        if sv.infchk:
             if pti == 0:
                 print(" group  inft  solvation free energy difference")
             else:
@@ -78,7 +78,7 @@ def _print_range_table(sv: SysVars, ost: OutputState) -> None:
             inft = int(sv.svinf[prmcnt])
             valcp = sv.chmpt[pti, prmcnt, 0]
             differ = valcp - sv.chmpt[pti, ost.grref, 0]
-            if sv.infchk == 'yes':
+            if sv.infchk:
                 print(f"{group:4d}{inft:7d}{valcp:17.5f}{differ:18.5f}")
             else:
                 print(f"{group:4d}{valcp:20.5f}{differ:18.5f}")
@@ -114,7 +114,7 @@ def _report_mesh_error(sv: SysVars, ost: OutputState) -> None:
 
 
 def wrtresl(sv: SysVars, ost: OutputState) -> None:
-    if sv.slfslt == 'yes':
+    if sv.slfslt:
         print(f"  Self-energy of the solute   =   {sv.slfeng:12.4f}  kcal/mol")
 
     if sv.clcond in ('basic', 'range'):
@@ -137,7 +137,7 @@ def wrtresl(sv: SysVars, ost: OutputState) -> None:
 
 
 def _print_cumulative_energy(sv: SysVars, ost: OutputState) -> None:
-    """`uvread != 'not'`: prints the cumulative-average table for the
+    """`uvread`: prints the cumulative-average table for the
     (raw) solute-solvent energy, before the free-energy results."""
     numslv = sv.numslv
     numrun = sv.numrun
@@ -152,7 +152,7 @@ def _print_cumulative_energy(sv: SysVars, ost: OutputState) -> None:
 def _print_average_table_header(sv: SysVars, pti: int, numrun: int, numslv: int) -> None:
     print()
     if pti == 0:
-        if sv.infchk == 'yes':
+        if sv.infchk:
             if numrun == 1:
                 print(" group  inft  solvation free energy     difference")
             else:
@@ -195,7 +195,7 @@ def _print_average_table(sv: SysVars, ost: OutputState) -> None:
             if prmcnt == 0:
                 _print_average_table_header(sv, pti, numrun, numslv)
 
-            if sv.infchk == 'yes':
+            if sv.infchk:
                 if numrun == 1:
                     print(f"{group:4d}{inft:7d}{avecp:17.5f}{(avecp - avcp0):21.5f}")
                 else:
@@ -211,7 +211,7 @@ def _print_average_table(sv: SysVars, ost: OutputState) -> None:
 
 
 def _print_per_run_table_header(sv: SysVars, pti: int, numslv: int) -> None:
-    if sv.infchk == 'yes':
+    if sv.infchk:
         if numslv == 1:
             print(" group  inft   Estimated free energy (kcal/mol)")
         elif pti == 0:
@@ -247,13 +247,13 @@ def _print_per_run_table(sv: SysVars, ost: OutputState) -> None:
             showcp = sv.chmpt[pti, prmcnt, :numrun]
             if prmcnt == 0:
                 _print_per_run_table_header(sv, pti, numslv)
-            _print_five_per_line(showcp, group, inft if sv.infchk == 'yes' else None)
+            _print_five_per_line(showcp, group, inft if sv.infchk else None)
 
 
 def wrtmerge(sv: SysVars, ost: OutputState) -> None:
     numrun = sv.numrun
 
-    if sv.uvread != 'not':
+    if sv.uvread:
         _print_cumulative_energy(sv, ost)
 
     _print_average_table(sv, ost)

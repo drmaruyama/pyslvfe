@@ -93,7 +93,7 @@ def wgtdst(sv: SysVars, cs: SfeCalcState, iduv: int, system: System,
     For `System.REFERENCE`, using `systype in ('slncv', 'extsl')` is a
     programming error *unless* the caller also asked for the "just use
     the reference density directly" shortcut (`wgttype == 'smpl'` or
-    `sv.wgtf2smpl == 'yes'`), which takes priority over that check --
+    `sv.wgtf2smpl`), which takes priority over that check --
     mirroring the Fortran `jdg` flag's sequential `if` assignments,
     where the later "use fref directly" assignment could silently
     override the earlier "this is a bug" marker.
@@ -102,7 +102,7 @@ def wgtdst(sv: SysVars, cs: SfeCalcState, iduv: int, system: System,
     fref = cs.edens[iduv]
 
     use_fref_directly = (system == System.REFERENCE
-                          and (wgttype == 'smpl' or sv.wgtf2smpl == 'yes'))
+                          and (wgttype == 'smpl' or sv.wgtf2smpl))
     if use_fref_directly:
         return fref
 
@@ -122,14 +122,14 @@ def wgtdst(sv: SysVars, cs: SfeCalcState, iduv: int, system: System,
 
 
 def getwght(sv: SysVars, cs: SfeCalcState, pti: int, system: System,
-            systype: str, wgttype: str, engtype: str) -> np.ndarray:
+            systype: str, wgttype: str, engtype: bool) -> np.ndarray:
     gemax = cs.gemax
     weight = np.zeros(gemax, dtype=np.float64)
     mask = cs.uvspec == pti
     idx = np.nonzero(mask)[0]
     for iduv in idx:
         weight[iduv] = wgtdst(sv, cs, iduv, system, systype, wgttype)
-    if engtype == 'yes':
+    if engtype:
         sel = mask & (weight > 0)
         minuv = np.min(np.abs(cs.uvcrd[sel]))
         for iduv in idx:
@@ -144,7 +144,7 @@ def getwght(sv: SysVars, cs: SfeCalcState, pti: int, system: System,
 
 
 def cvfcen(sv: SysVars, cs: SfeCalcState, pti: int, system: System,
-           systype: str, wgttype: str, engtype: str) -> float:
+           systype: str, wgttype: str, engtype: bool) -> float:
     weight = getwght(sv, cs, pti, system, systype, wgttype, engtype)
     mask = cs.uvspec == pti
     errtag = False
@@ -248,7 +248,7 @@ def pyhnc_reference(indpmf: float, kT: float) -> float:
 def pyhnc_indirect(indpmf: float, kT: float) -> float:
     """Percus-Yevick/HNC closure contribution for the indirect
     (correlation-matrix-derived) solution PMF -- the sdrcv-based
-    correction term used only in `chmpot`'s `slncor == 'yes'` branch.
+    correction term used only in `chmpot`'s `slncor` branch.
     """
     factor = indpmf / kT
     if factor > 0.0:
@@ -305,7 +305,7 @@ def distnorm(sv: SysVars, cs: SfeCalcState) -> None:
     for system in (System.SOLUTION, System.REFERENCE):
         if system == System.SOLUTION:
             edhst = cs.edist.copy()
-            edmcr = cs.edscr.copy() if sv.slncor == 'yes' else None
+            edmcr = cs.edscr.copy() if sv.slncor else None
         else:
             edhst = cs.edens.copy()
             edmcr = cs.ecorr.copy()
@@ -316,7 +316,7 @@ def distnorm(sv: SysVars, cs: SfeCalcState) -> None:
             factor = sv.nummol[pti] / factor if factor > sv.zero else 0.0
             edhst[mask] *= factor
 
-        if not (system == System.SOLUTION and sv.slncor != 'yes'):
+        if not (system == System.SOLUTION and not sv.slncor):
             errtmp = sv.norm_error + 1.0
             itrcnt = 0
             correc = np.ones(cs.gemax, dtype=np.float64)
@@ -354,7 +354,7 @@ def distnorm(sv: SysVars, cs: SfeCalcState) -> None:
 
         if system == System.SOLUTION:
             cs.edist[:] = edhst
-            if sv.slncor == 'yes':
+            if sv.slncor:
                 cs.edscr[:, :] = edmcr
         else:
             cs.edens[:] = edhst
@@ -410,8 +410,8 @@ def distshow(sv: SysVars, cs: SfeCalcState) -> None:
 
 def _slncv_zeroshift_mxco(sv: SysVars, cs: SfeCalcState, pti: int) -> float:
     factor = wgtmxco(sv, pti)
-    return (factor * cvfcen(sv, cs, pti, System.SOLUTION, 'slncv', sv.wgtfnform, 'not')
-            - (1.0 - factor) * cvfcen(sv, cs, pti, System.REFERENCE, 'uvcrd', 'smpl', 'yes'))
+    return (factor * cvfcen(sv, cs, pti, System.SOLUTION, 'slncv', sv.wgtfnform, False)
+            - (1.0 - factor) * cvfcen(sv, cs, pti, System.REFERENCE, 'uvcrd', 'smpl', True))
 
 
 # `zerosft` dispatch for getslncv's additive-constant fixup. Keyed by
@@ -420,8 +420,8 @@ _SLNCV_ZEROSHIFT: dict[str, Callable[[SysVars, SfeCalcState, int], float]] = {
     'eczr': lambda sv, cs, pti: 0.0,
     'orig': lambda sv, cs, pti: 0.0,
     'mxco': _slncv_zeroshift_mxco,
-    'zero': lambda sv, cs, pti: cvfcen(sv, cs, pti, System.SOLUTION, 'slncv', sv.wgtfnform, 'yes'),
-    'cntr': lambda sv, cs, pti: cvfcen(sv, cs, pti, System.SOLUTION, 'slncv', sv.wgtfnform, 'not'),
+    'zero': lambda sv, cs, pti: cvfcen(sv, cs, pti, System.SOLUTION, 'slncv', sv.wgtfnform, True),
+    'cntr': lambda sv, cs, pti: cvfcen(sv, cs, pti, System.SOLUTION, 'slncv', sv.wgtfnform, False),
 }
 
 
@@ -604,14 +604,14 @@ def _zeroshift_ref_energy(sv: SysVars, cs: SfeCalcState, pti: int,
     if sv.zerosft in ('eczr', 'orig'):
         return arrs.target[zeroec(sv, cs, pti, system)]
     if sv.zerosft == 'mxco':
-        return cvfcen(sv, cs, pti, system, 'inscv', 'smpl', 'yes')
+        return cvfcen(sv, cs, pti, system, 'inscv', 'smpl', True)
     return 0.0
 
 
 def _pmf_zeroshift_mxco(sv: SysVars, cs: SfeCalcState, pti: int,
                          system: System, zerouv: np.ndarray) -> float:
     factor = wgtmxco(sv, pti)
-    return (factor * cvfcen(sv, cs, pti, system, 'inscv', sv.wgtfnform, 'not')
+    return (factor * cvfcen(sv, cs, pti, system, 'inscv', sv.wgtfnform, False)
             - (1.0 - factor) * zerouv[pti])
 
 
@@ -621,8 +621,8 @@ _PMF_ZEROSHIFT: dict[str, Callable[[SysVars, SfeCalcState, int, System, np.ndarr
     'eczr': lambda sv, cs, pti, system, zerouv: -zerouv[pti],
     'orig': lambda sv, cs, pti, system, zerouv: -zerouv[pti],
     'mxco': _pmf_zeroshift_mxco,
-    'zero': lambda sv, cs, pti, system, zerouv: cvfcen(sv, cs, pti, system, 'inscv', sv.wgtfnform, 'yes'),
-    'cntr': lambda sv, cs, pti, system, zerouv: cvfcen(sv, cs, pti, system, 'inscv', sv.wgtfnform, 'not'),
+    'zero': lambda sv, cs, pti, system, zerouv: cvfcen(sv, cs, pti, system, 'inscv', sv.wgtfnform, True),
+    'cntr': lambda sv, cs, pti, system, zerouv: cvfcen(sv, cs, pti, system, 'inscv', sv.wgtfnform, False),
 }
 
 
@@ -757,7 +757,7 @@ def getinscv(sv: SysVars, cs: SfeCalcState) -> None:
         cs.invmtrx_first_time = False
 
     for system in (System.SOLUTION, System.REFERENCE):
-        if system == System.SOLUTION and sv.slncor != 'yes':
+        if system == System.SOLUTION and not sv.slncor:
             continue
         arrs = _system_arrays(cs, system)
         edvec, edmcr, ddiff = _prepare_correlation_matrix(sv, cs, arrs)
@@ -847,7 +847,7 @@ def _build_grouped_arrays(sv: SysVars, cs: SfeCalcState,
     # G: (ermax, gemax) grouping indicator; edscr = G^T rdslc G, ecorr = G^T rdcor G
     G = sparse.csr_matrix((np.ones(ermax), (np.arange(ermax), idrduv)),
                            shape=(ermax, gemax))
-    cs.edscr = np.asarray(G.T @ sv.rdslc @ G) if sv.slncor == 'yes' else None
+    cs.edscr = np.asarray(G.T @ sv.rdslc @ G) if sv.slncor else None
     cs.ecorr = np.asarray(G.T @ sv.rdcor @ G)
 
 
@@ -860,28 +860,28 @@ def _init_free_energy_arrays(sv: SysVars, cs: SfeCalcState) -> None:
     cs.inscv = np.zeros(gemax, dtype=np.float64)
     cs.zrsln = np.zeros(numslv, dtype=np.float64)
     cs.zrref = np.zeros(numslv, dtype=np.float64)
-    if sv.slncor == 'yes':
+    if sv.slncor:
         cs.sdrcv = np.zeros(gemax, dtype=np.float64)
         cs.zrsdr = np.zeros(numslv, dtype=np.float64)
 
 
 def _apply_average_uv_energy(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
     """Either computes `sv.aveuv` from the (normalized) distribution
-    (when `uvread == 'not'`), or leaves it at the value already read
+    (when `not uvread`), or leaves it at the value already read
     from `aveuv.tt`; applies the LJ long-range correction in either
-    case. The `prmcnt == 1` guard in the `uvread != 'not'` branch
+    case. The `prmcnt == 1` guard in the `uvread` branch
     mirrors the Fortran original: when `aveuv` isn't recomputed every
     `chmpot` call, the LJ correction (which is added on top of it)
     must only be applied once per run, not once per `prmcnt`.
     """
     numslv = sv.numslv
-    if sv.uvread == 'not':
+    if not sv.uvread:
         for pti in range(numslv):
             mask = cs.uvspec == pti
             sv.aveuv[pti] = np.sum(cs.uvcrd[mask] * cs.edist[mask])
-        if sv.ljlrc == 'yes':
+        if sv.ljlrc:
             ljcorrect(sv, cs.lj_state, cntrun)
-    elif prmcnt == 1 and sv.ljlrc == 'yes':
+    elif prmcnt == 1 and sv.ljlrc:
         ljcorrect(sv, cs.lj_state, cntrun)
 
 
@@ -926,7 +926,7 @@ def _species_free_energy(sv: SysVars, cs: SfeCalcState, pti: int,
         slvfe += -sv.kT * (cs.edist[iduv] - cs.edens[iduv])
 
         lcent = -(cs.slncv[iduv] + cs.zrsln[pti] + cs.uvcrd[iduv])
-        if (sv.slncor == 'yes' and cs.edist[iduv] > soln_zero
+        if (sv.slncor and cs.edist[iduv] > soln_zero
                 and cs.edens[iduv] <= refs_zero):
             ampl = lcent * cs.edens[iduv] / cs.edist[iduv]
             lcent = ampl - (cs.zrsln[pti] + cs.uvcrd[iduv]) * (
@@ -935,7 +935,7 @@ def _species_free_energy(sv: SysVars, cs: SfeCalcState, pti: int,
 
         lcsln, lcref = functional_fn(sv, cs.slncv[iduv], cs.inscv[iduv])
 
-        if (sv.slncor == 'yes' and cs.edist[iduv] > soln_zero
+        if (sv.slncor and cs.edist[iduv] > soln_zero
                 and cs.edens[iduv] <= refs_zero):
             lcsln = pyhnc_indirect(cs.sdrcv[iduv] + cs.zrsdr[pti], sv.kT)
 
@@ -952,18 +952,18 @@ def _species_free_energy(sv: SysVars, cs: SfeCalcState, pti: int,
 def _finalize_total_and_report(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
     """Sums the per-species contributions into the total (index 0),
     adds the solute self-energy if requested, and prints the
-    zero-shift diagnostics when `wrtzrsft == 'yes'`."""
+    zero-shift diagnostics when `wrtzrsft`."""
     numslv = sv.numslv
     sv.chmpt[0, prmcnt - 1, cntrun - 1] = sv.chmpt[1:numslv + 1, prmcnt - 1, cntrun - 1].sum()
-    if sv.slfslt == 'yes':
+    if sv.slfslt:
         sv.chmpt[0, prmcnt - 1, cntrun - 1] += sv.slfeng
 
-    if sv.wrtzrsft == 'yes':
+    if sv.wrtzrsft:
         print('  Zero shift for solution             = '
               + ''.join(f'{v:12.4f}' for v in cs.zrsln))
         print('  Zero shift for reference solvent    = '
               + ''.join(f'{v:12.4f}' for v in cs.zrref))
-        if sv.slncor == 'yes':
+        if sv.slncor:
             print('  Zero shift for solution correlation = '
                   + ''.join(f'{v:12.4f}' for v in cs.zrsdr))
 
@@ -987,9 +987,9 @@ def chmpot(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
     _build_grouped_arrays(sv, cs, rduvmax_cum, uvmax_cum)
     _init_free_energy_arrays(sv, cs)
 
-    if sv.normalize == 'yes':
+    if sv.normalize:
         distnorm(sv, cs)
-    if sv.showdst == 'yes':
+    if sv.showdst:
         distshow(sv, cs)
 
     getslncv(sv, cs)
@@ -997,7 +997,7 @@ def chmpot(sv: SysVars, cs: SfeCalcState, prmcnt: int, cntrun: int) -> None:
 
     _apply_average_uv_energy(sv, cs, prmcnt, cntrun)
 
-    cumu_process = (sv.cumuint == 'yes' and group == sv.pickgr and inft == 0)
+    cumu_process = (sv.cumuint and group == sv.pickgr and inft == 0)
     if cumu_process and cntrun == 1:
         cs.cumsfe = np.zeros((cs.gemax, sv.numrun + 1), dtype=np.float64)
 

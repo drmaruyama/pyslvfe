@@ -49,11 +49,11 @@ def _setup_run_dimensions(sv: SysVars) -> Path:
 
     if sv.clcond in ('basic', 'range'):
         sv.engfile[0] = input(" What is the energy distribution in solution?\n")
-        if sv.slncor == 'yes':
+        if sv.slncor:
             sv.engfile[1] = input(" What is the energy correlation in solution?\n")
         sv.engfile[2] = input(" What is the energy density for insertion?\n")
         sv.engfile[3] = input(" What is the energy correlation for insertion?\n")
-        if sv.infchk == 'yes' and sv.meshread == 'yes':
+        if sv.infchk and sv.meshread:
             sv.engfile[4] = input(" Which file has the meshes for energy coordinates?\n")
         sv.maxsln = 1
         sv.maxref = 1
@@ -104,13 +104,13 @@ def _allocate_arrays(sv: SysVars, ermax: int, numslv: int) -> None:
     sv.rdcrd = np.zeros(ermax, dtype=np.float64)
     sv.rddst = np.zeros(ermax, dtype=np.float64)
     sv.rddns = np.zeros(ermax, dtype=np.float64)
-    if sv.slncor == 'yes':
+    if sv.slncor:
         sv.rdslc = np.zeros((ermax, ermax), dtype=np.float64)
     sv.rdcor = np.zeros((ermax, ermax), dtype=np.float64)
     sv.rdspec = np.zeros(ermax, dtype=np.int64)
     sv.chmpt = np.zeros((numslv + 1, sv.prmmax, sv.numrun), dtype=np.float64)
     sv.aveuv = np.zeros(numslv, dtype=np.float64)
-    if sv.uvread != 'not' and sv.clcond == 'merge':
+    if sv.uvread and sv.clcond == 'merge':
         sv.uvene = np.zeros((numslv, sv.maxsln), dtype=np.float64)
         sv.blockuv = np.zeros((numslv + 1, sv.numrun), dtype=np.float64)
     sv.svgrp = np.zeros(sv.prmmax, dtype=np.int64)
@@ -155,10 +155,10 @@ def _detect_mesh_type(sv: SysVars, opnfile: Path, ermax: int) -> None:
 
 
 def _read_mesh_core_override(sv: SysVars, numslv: int) -> None:
-    """`infchk == 'yes' and meshread == 'yes'`: overrides the log-mesh
+    """`infchk and meshread`: overrides the log-mesh
     bin count (`rduvcore`) detected by `_detect_mesh_type` with values
     read from an explicit `EngMesh` file, per species."""
-    if not (sv.infchk == 'yes' and sv.meshread == 'yes'):
+    if not (sv.infchk and sv.meshread):
         return
     meshfile = (Path(sv.solndirec) / sv.engmeshfile if sv.clcond == 'merge'
                 else Path(sv.engfile[4]))
@@ -195,13 +195,13 @@ def _setup_group_inft_grid(sv: SysVars) -> None:
 
     `'basic'` mode prompts for a single group/inft/temperature.
     `'range'`/`'merge'` mode instead sweep a fixed table of group/inft
-    combinations (when `infchk == 'yes'`) or an increasing sequence of
+    combinations (when `infchk`) or an increasing sequence of
     group sizes (otherwise).
     """
     if sv.clcond == 'basic':
         group = int(input(" How many data are grouped into one?\n"))
         inft = 0
-        if sv.infchk == 'yes':
+        if sv.infchk:
             inft = int(input(" How many large-energy meshes are merged ? (in %)\n"))
         sv.svgrp[0] = group
         sv.svinf[0] = inft
@@ -209,7 +209,7 @@ def _setup_group_inft_grid(sv: SysVars) -> None:
     else:  # range, merge
         for prmcnt in range(sv.prmmax):        # 0-based; Fortran prmcnt is 1-based
             pc1 = prmcnt + 1                     # 1-based counter, matches Fortran cases
-            if sv.infchk == 'yes':
+            if sv.infchk:
                 if pc1 in _RANGE_INFCHK_TABLE:
                     group, inft = _RANGE_INFCHK_TABLE[pc1]
                 else:
@@ -233,7 +233,7 @@ def _read_average_uv_energy(sv: SysVars, numslv: int) -> None:
     `'merge'` mode. Falls back to `uvread = 'not'` (computed from the
     energy distribution instead, in `chmpot`) if that file is missing.
     """
-    if sv.uvread == 'not':
+    if not sv.uvread:
         return
     if sv.clcond in ('basic', 'range'):
         vals = input(" What is average solute-solvent energy in solution?\n").split()
@@ -256,14 +256,14 @@ def _read_average_uv_energy(sv: SysVars, numslv: int) -> None:
 
 def _read_weights(sv: SysVars, directory: str, filename: str,
                    weights: np.ndarray, count: int) -> None:
-    """Reads (when `clcond == 'merge'` and `readwgtfl == 'yes'`) the
+    """Reads (when `clcond == 'merge'` and `readwgtfl`) the
     per-file weights from `directory/filename` into `weights[:count]`
     (defaulting to equal weights otherwise), then normalizes them to
     sum to 1. `weights` is mutated in place; used for both
     `weight_soln`/`sv.wgtsln` and `weight_refs`/`sv.wgtref`.
     """
     weights[:count] = 1.0
-    if sv.clcond == 'merge' and sv.readwgtfl == 'yes':
+    if sv.clcond == 'merge' and sv.readwgtfl:
         with open(Path(directory) / filename) as f:
             for i in range(count):
                 parts = f.readline().split()
@@ -279,14 +279,14 @@ def _read_solute_self_energy(sv: SysVars, numslv: int) -> None:
     plain-cutoff electrostatics rather than PME/Ewald), silently falls
     back to `slfslt = 'not'`.
     """
-    if sv.slfslt != 'yes':
+    if not sv.slfslt:
         return
     if sv.clcond in ('basic', 'range'):
         sv.slfeng = float(input(" What is the solute self-energy?\n"))
         return
 
     # merge
-    if sv.readwgtfl == 'not':
+    if not sv.readwgtfl:
         raise SlvfeError("readwgtfl needs to be yes when slfslt is yes")
     sv.slfeng = 0.0
     opnfile2 = Path(sv.refsdirec) / sv.wgtreffl
@@ -410,7 +410,7 @@ def _compute_file_ranges(sv: SysVars, cntrun: int) -> tuple[int, int, int, int]:
         slnini = (cntrun - 1) % sv.maxsln
         slnfin = slnini
 
-    if sv.refmerge == 'not':
+    if not sv.refmerge:
         if sv.maxref >= sv.numrun:
             m = sv.maxref // sv.numrun
             refini = (cntrun - 1) * m
@@ -427,13 +427,13 @@ def _compute_file_ranges(sv: SysVars, cntrun: int) -> tuple[int, int, int, int]:
 def _reset_accumulators(sv: SysVars, cntrun: int) -> None:
     """Zeroes the distribution/correlation accumulators that this
     run's file reads add into. `rddns`/`rdcor` (the reference side) are
-    only reset on the first run, or on every run if `refmerge == 'not'`
+    only reset on the first run, or on every run if `not refmerge`
     (each run then reads its own distinct slice of reference files).
     """
     sv.rddst[:] = 0.0
-    if sv.slncor == 'yes':
+    if sv.slncor:
         sv.rdslc[:, :] = 0.0
-    if cntrun == 1 or sv.refmerge == 'not':
+    if cntrun == 1 or not sv.refmerge:
         sv.rddns[:] = 0.0
         sv.rdcor[:, :] = 0.0
 
@@ -456,13 +456,13 @@ def _run_read_jobs(sv: SysVars, jobs: list[_ReadJob], cntrun: int,
                     ermax: int, bin_check: np.ndarray) -> None:
     """Reads and accumulates each job's numbered files (renormalizing
     that job's weight slice first), skipping `corsln` when
-    `slncor != 'yes'` and skipping the reference-side jobs on runs
-    after the first when `refmerge == 'yes'` (they were already fully
+    `not slncor` and skipping the reference-side jobs on runs
+    after the first when `refmerge` (they were already fully
     read on the first run)."""
     for job in jobs:
-        if job.role == 'corsln' and sv.slncor != 'yes':
+        if job.role == 'corsln' and not sv.slncor:
             continue
-        if job.role in ('engref', 'corref') and cntrun > 1 and sv.refmerge == 'yes':
+        if job.role in ('engref', 'corref') and cntrun > 1 and sv.refmerge:
             continue
 
         job.weights[job.ecmin:job.ecmax + 1] /= job.weights[job.ecmin:job.ecmax + 1].sum()
@@ -505,12 +505,12 @@ def _check_and_record_normalization(sv: SysVars, cntrun: int) -> None:
 
 
 def _update_average_uv_energy(sv: SysVars, cntrun: int, slnini: int, slnfin: int) -> None:
-    """`uvread != 'not'` and `clcond == 'merge'`: averages this run's
+    """`uvread` and `clcond == 'merge'`: averages this run's
     slice of `sv.uvene` (weighted by `sv.wgtsln`) into `sv.aveuv`, and
     records the per-run total (plus the solute self-energy, if any) in
     `sv.blockuv` for `wrtmerge`'s cumulative-average table.
     """
-    if not (sv.uvread != 'not' and sv.clcond == 'merge'):
+    if not (sv.uvread and sv.clcond == 'merge'):
         return
     numslv = sv.numslv
     for pti in range(numslv):
@@ -518,7 +518,7 @@ def _update_average_uv_energy(sv: SysVars, cntrun: int, slnini: int, slnfin: int
                                 * sv.uvene[pti, slnini:slnfin + 1])
     sv.blockuv[1:numslv + 1, cntrun - 1] = sv.aveuv[:numslv]
     sv.blockuv[0, cntrun - 1] = sv.blockuv[1:numslv + 1, cntrun - 1].sum()
-    if sv.slfslt == 'yes':
+    if sv.slfslt:
         sv.blockuv[0, cntrun - 1] += sv.slfeng
 
 

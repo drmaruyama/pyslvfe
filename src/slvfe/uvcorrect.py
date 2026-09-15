@@ -138,19 +138,105 @@ def _set_keyparam(sv: SysVars, st: LJState) -> None:
         sv.avevolume = float(input())
 
 
-def _get_ljtable(sv: SysVars, st: LJState) -> None:
-    numslv = sv.numslv
-    refsdirec = Path(sv.refsdirec)
+def _molfile_path(refsdirec: Path, pti: int) -> Path:
+    """`pti == 0` -> the solute (`SltInfo`); else solvent species `pti`
+    (1-based file suffix) -> `MolPrm{pti}`."""
+    return refsdirec / SOLUTE_FILE if pti == 0 else refsdirec / f"{SOLVENT_FILE}{pti}"
 
-    # --- site counts ---
+
+def _count_sites(sv: SysVars, refsdirec: Path) -> np.ndarray:
+    """Counts the number of (non-blank) lines -- LJ sites -- in each
+    SltInfo/MolPrmN file: index 0 is the solute, 1..numslv the solvent
+    species."""
+    numslv = sv.numslv
     ptsite = np.zeros(numslv + 1, dtype=np.int64)
     for pti in range(numslv + 1):
-        molfile = (refsdirec / SOLUTE_FILE if pti == 0
-                   else refsdirec / f"{SOLVENT_FILE}{pti}")
-        with open(molfile) as f:
+        with open(_molfile_path(refsdirec, pti)) as f:
             ptsite[pti] = sum(1 for line in f if line.strip())
-    st.ptsite = ptsite
+    return ptsite
 
+
+def _read_molfile_lj_params(molfile: Path, stmax: int, ljformat: int
+                             ) -> tuple[np.ndarray, np.ndarray]:
+    """Reads one SltInfo/MolPrmN file's `stmax` sites, returning
+    (epsilon-like, sigma-like) arrays in kcal/mol, Angstrom, after
+    applying `ljformat`'s unit conversion / representation change."""
+    ljene_temp = np.zeros(stmax, dtype=np.float64)
+    ljlen_temp = np.zeros(stmax, dtype=np.float64)
+    with open(molfile) as f:
+        for sid in range(stmax):
+            linebuf = f.readline()
+            parts = linebuf.split()
+            # New format: m, mass, atmtype, atmname, xst(1), xst(2), xst(3)  (7 tokens)
+            # Old format: m, atmtype, xst(1), xst(2), xst(3)                 (5 tokens)
+            # We need xst(2) (epsilon-like) and xst(3) (sigma-like).
+            if len(parts) >= 7:
+                xst2, xst3 = float(parts[5]), float(parts[6])
+            elif len(parts) >= 5:
+                xst2, xst3 = float(parts[3]), float(parts[4])
+            else:
+                raise SlvfeError(f"Cannot parse molfile line: {linebuf!r}")
+
+            if ljformat == LJFMT_EPS_Rminh:
+                xst3 = _SGMCNV * xst3
+            if ljformat in (LJFMT_A_C, LJFMT_C12_C6):
+                if xst3 != 0.0:
+                    factor = (xst2 / xst3) ** (1.0 / 6.0)
+                    xst2 = xst3 / (4.0 * (factor ** 6))
+                    xst3 = factor
+                else:
+                    xst2 = 0.0
+            if ljformat in (LJFMT_EPS_J_SGM_A, LJFMT_C12_C6):
+                xst2 = _ENGCNV * xst2
+                xst3 = _LENCNV * xst3
+
+            ljene_temp[sid] = xst2
+            ljlen_temp[sid] = xst3
+    return ljene_temp, ljlen_temp
+
+
+def _assign_lj_types(ljene_temp: np.ndarray, ljlen_temp: np.ndarray, ljformat: int,
+                      ljene_temp_table: np.ndarray, ljlen_temp_table: np.ndarray,
+                      ljtype_max: int) -> tuple[np.ndarray, int]:
+    """Maps each site's (epsilon, sigma) pair onto a shared,
+    deduplicated LJ-type index, appending newly-seen pairs to
+    `ljene_temp_table`/`ljlen_temp_table` (mutated in place) and
+    returning the updated `ljtype_max`. If `ljformat == LJFMT_TABLE`,
+    the "epsilon" column is already a type index, so no deduplication
+    is needed.
+    """
+    stmax = len(ljene_temp)
+    if ljformat == LJFMT_TABLE:
+        return ljene_temp.astype(np.int64), ljtype_max
+
+    ljtype_temp = np.zeros(stmax, dtype=np.int64)
+    for sid in range(stmax):
+        lj_is_new = True
+        ljtype_found = -1
+        for i in range(ljtype_max):
+            if (ljlen_temp_table[i] == ljlen_temp[sid]
+                    and ljene_temp_table[i] == ljene_temp[sid]):
+                ljtype_found = i
+                lj_is_new = False
+                break
+        if lj_is_new:
+            ljlen_temp_table[ljtype_max] = ljlen_temp[sid]
+            ljene_temp_table[ljtype_max] = ljene_temp[sid]
+            ljtype_found = ljtype_max
+            ljtype_max += 1
+        ljtype_temp[sid] = ljtype_found
+    return ljtype_temp, ljtype_max
+
+
+def _build_ljtype_table(sv: SysVars, st: LJState, refsdirec: Path, ptsite: np.ndarray
+                         ) -> tuple[np.ndarray, int, np.ndarray, np.ndarray]:
+    """Reads every SltInfo/MolPrmN file and builds `ljtype` -- a lookup
+    from (site, species) to deduplicated LJ-type index -- plus the
+    per-type epsilon/sigma tables (returned separately since
+    `_combine_lj_params` still needs them to fill the pairwise
+    interaction matrices).
+    """
+    numslv = sv.numslv
     total_sites = int(ptsite.sum())
     ljlen_temp_table = np.zeros(total_sites, dtype=np.float64)
     ljene_temp_table = np.zeros(total_sites, dtype=np.float64)
@@ -159,99 +245,74 @@ def _get_ljtable(sv: SysVars, st: LJState) -> None:
     ljtype_max = 0
 
     for pti in range(numslv + 1):
-        molfile = (refsdirec / SOLUTE_FILE if pti == 0
-                   else refsdirec / f"{SOLVENT_FILE}{pti}")
+        molfile = _molfile_path(refsdirec, pti)
         stmax = int(ptsite[pti])
-        ljtype_temp = np.zeros(stmax, dtype=np.int64)
-        ljlen_temp = np.zeros(stmax, dtype=np.float64)
-        ljene_temp = np.zeros(stmax, dtype=np.float64)
-
-        with open(molfile) as f:
-            for sid in range(stmax):
-                linebuf = f.readline()
-                parts = linebuf.split()
-                # New format: m, mass, atmtype, atmname, xst(1), xst(2), xst(3)  (7 tokens)
-                # Old format: m, atmtype, xst(1), xst(2), xst(3)                 (5 tokens)
-                # We need xst(2) (epsilon-like) and xst(3) (sigma-like).
-                if len(parts) >= 7:
-                    xst2, xst3 = float(parts[5]), float(parts[6])
-                elif len(parts) >= 5:
-                    xst2, xst3 = float(parts[3]), float(parts[4])
-                else:
-                    raise SlvfeError(f"Cannot parse molfile line: {linebuf!r}")
-
-                if st.ljformat == LJFMT_EPS_Rminh:
-                    xst3 = _SGMCNV * xst3
-                if st.ljformat in (LJFMT_A_C, LJFMT_C12_C6):
-                    if xst3 != 0.0:
-                        factor = (xst2 / xst3) ** (1.0 / 6.0)
-                        xst2 = xst3 / (4.0 * (factor ** 6))
-                        xst3 = factor
-                    else:
-                        xst2 = 0.0
-                if st.ljformat in (LJFMT_EPS_J_SGM_A, LJFMT_C12_C6):
-                    xst2 = _ENGCNV * xst2
-                    xst3 = _LENCNV * xst3
-
-                ljene_temp[sid] = xst2
-                ljlen_temp[sid] = xst3
-
-        if st.ljformat == LJFMT_TABLE:
-            ljtype_temp[:stmax] = ljene_temp[:stmax].astype(np.int64)
-        else:
-            for sid in range(stmax):
-                lj_is_new = True
-                ljtype_found = -1
-                for i in range(ljtype_max):
-                    if (ljlen_temp_table[i] == ljlen_temp[sid]
-                            and ljene_temp_table[i] == ljene_temp[sid]):
-                        ljtype_found = i
-                        lj_is_new = False
-                        break
-                if lj_is_new:
-                    ljlen_temp_table[ljtype_max] = ljlen_temp[sid]
-                    ljene_temp_table[ljtype_max] = ljene_temp[sid]
-                    ljtype_found = ljtype_max
-                    ljtype_max += 1
-                ljtype_temp[sid] = ljtype_found
-
+        ljene_temp, ljlen_temp = _read_molfile_lj_params(molfile, stmax, st.ljformat)
+        ljtype_temp, ljtype_max = _assign_lj_types(
+            ljene_temp, ljlen_temp, st.ljformat,
+            ljene_temp_table, ljlen_temp_table, ljtype_max)
         ljtype[:stmax, pti] = ljtype_temp
 
+    return ljtype, ljtype_max, ljlen_temp_table, ljene_temp_table
+
+
+def _read_ljtable_file(refsdirec: Path) -> tuple[int, np.ndarray, np.ndarray]:
+    """`ljformat == LJFMT_TABLE`: reads the explicit `LJTable` file
+    (type count, then a sigma matrix and an epsilon matrix, each
+    `ljtype_max` x `ljtype_max`), bypassing the combining-rule
+    computation in `_combine_lj_params`."""
+    with open(refsdirec / LJTABLE_FILE) as f:
+        ljtype_max = int(f.readline())
+        ljlensq_mat = np.zeros((ljtype_max, ljtype_max), dtype=np.float64)
+        ljene_mat = np.zeros((ljtype_max, ljtype_max), dtype=np.float64)
+        for i in range(ljtype_max):
+            row = [float(v) for v in f.readline().split()]
+            ljlensq_mat[i, :] = np.array(row) ** 2
+        for i in range(ljtype_max):
+            row = [float(v) for v in f.readline().split()]
+            ljene_mat[i, :] = row
+    return ljtype_max, ljlensq_mat, ljene_mat
+
+
+def _combine_lj_params(cmbrule: int, ljlen_temp_table: np.ndarray,
+                        ljene_temp_table: np.ndarray, ljtype_max: int
+                        ) -> tuple[np.ndarray, np.ndarray]:
+    """Builds the pairwise interaction matrices from the per-type
+    epsilon/sigma values using the standard Lorentz-Berthelot
+    (arithmetic-mean sigma / geometric-mean epsilon) or fully
+    geometric combining rule."""
+    n = ljtype_max
+    ljlensq_mat = np.zeros((n, n), dtype=np.float64)
+    ljene_mat = np.zeros((n, n), dtype=np.float64)
+    lens = ljlen_temp_table[:n]
+    engs = ljene_temp_table[:n]
+    for i in range(n):
+        if cmbrule == LJCMB_ARITH:
+            ljlensq_mat[:, i] = ((lens + lens[i]) / 2.0) ** 2
+        elif cmbrule == LJCMB_GEOM:
+            ljlensq_mat[:, i] = lens * lens[i]
+        else:
+            raise SlvfeError("Incorrect cmbrule")
+        ljene_mat[:, i] = np.sqrt(engs * engs[i])
+    return ljlensq_mat, ljene_mat
+
+
+def _get_ljtable(sv: SysVars, st: LJState) -> None:
+    refsdirec = Path(sv.refsdirec)
+
+    ptsite = _count_sites(sv, refsdirec)
+    st.ptsite = ptsite
+
+    ljtype, ljtype_max, ljlen_temp_table, ljene_temp_table = _build_ljtype_table(
+        sv, st, refsdirec, ptsite)
     st.ljtype_max = ljtype_max
     st.ljtype = ljtype
 
-    # --- fill LJ table ---
     if st.ljformat == LJFMT_TABLE:
-        tablefile = refsdirec / LJTABLE_FILE
-        with open(tablefile) as f:
-            ljtype_max = int(f.readline())
-            st.ljtype_max = ljtype_max
-            ljlensq_mat = np.zeros((ljtype_max, ljtype_max), dtype=np.float64)
-            ljene_mat = np.zeros((ljtype_max, ljtype_max), dtype=np.float64)
-            for i in range(ljtype_max):
-                row = [float(v) for v in f.readline().split()]
-                ljlensq_mat[i, :] = np.array(row) ** 2
-            for i in range(ljtype_max):
-                row = [float(v) for v in f.readline().split()]
-                ljene_mat[i, :] = row
-        st.ljlensq_mat = ljlensq_mat
-        st.ljene_mat = ljene_mat
+        st.ljtype_max, st.ljlensq_mat, st.ljene_mat = _read_ljtable_file(refsdirec)
     else:
-        n = ljtype_max
-        ljlensq_mat = np.zeros((n, n), dtype=np.float64)
-        ljene_mat = np.zeros((n, n), dtype=np.float64)
-        lens = ljlen_temp_table[:n]
-        engs = ljene_temp_table[:n]
-        for i in range(n):
-            if st.cmbrule == LJCMB_ARITH:
-                ljlensq_mat[:, i] = ((lens + lens[i]) / 2.0) ** 2
-            elif st.cmbrule == LJCMB_GEOM:
-                ljlensq_mat[:, i] = lens * lens[i]
-            else:
-                raise SlvfeError("Incorrect cmbrule")
-            ljene_mat[:, i] = np.sqrt(engs * engs[i])
-        st.ljlensq_mat = ljlensq_mat
-        st.ljene_mat = ljene_mat
+        st.ljlensq_mat, st.ljene_mat = _combine_lj_params(
+            st.cmbrule, ljlen_temp_table, ljene_temp_table, ljtype_max)
 
 
 def _calc_ljlrc(sv: SysVars, st: LJState, pti: int) -> float:

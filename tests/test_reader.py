@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from slvfe.config import SysVars
-from slvfe.reader import datread
+from slvfe.reader import datread, defcond
 from scipy.io import FortranFile
 
 
@@ -95,6 +95,69 @@ def test_datread_merge_single_species():
         print("test_datread_merge_single_species OK")
 
 
+def test_defcond_merge_two_species():
+    """Exercises `defcond` end-to-end (bin/species counting, mesh-type
+    detection, the group/inft grid, and weight-file reading), which
+    `test_datread_merge_single_species` above does not touch (it sets
+    up `sv` by hand and calls `datread` directly)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        soln = tmp / 'soln'
+        refs = tmp / 'refs'
+        soln.mkdir()
+        refs.mkdir()
+
+        # 2 species, 4 (linearly spaced) bins each -> ermax = 8
+        rows = (
+            [(-2, -1.5, 1, 1.0), (-1, -0.5, 1, 2.0),
+             (0, 0.5, 1, 3.0), (1, 1.5, 1, 4.0)]
+            + [(-2, -2.0, 2, 1.0), (-1, -1.0, 2, 2.0),
+               (0, 0.0, 2, 3.0), (1, 1.0, 2, 4.0)]
+        )
+        _write_engfile(soln / 'engsln.01', rows)
+
+        with open(soln / 'weight_soln', 'w') as f:
+            f.write("1 1.0\n")
+        with open(refs / 'weight_refs', 'w') as f:
+            f.write("1 1.0\n")
+
+        sv = SysVars()
+        sv.clcond = 'merge'
+        sv.solndirec = str(soln)
+        sv.refsdirec = str(refs)
+        sv.slndnspf = 'engsln'
+        sv.slncor = 'not'
+        sv.uvread = 'not'
+        sv.slfslt = 'not'
+        sv.infchk = 'not'
+        sv.meshread = 'not'
+        sv.readwgtfl = 'yes'
+        sv.refmerge = 'yes'
+        sv.suffix_of_engsln_is_tt = False
+        sv.suffix_of_engref_is_tt = False
+        sv.numsln = 1
+        sv.numref = 1
+        sv.numdiv = 1
+        sv.numprm = 3
+        sv.inptemp = 310.0
+        sv.pickgr = 1
+
+        defcond(sv)
+
+        assert sv.ermax == 8
+        assert sv.numslv == 2
+        assert list(sv.rduvmax) == [4, 4]
+        assert list(sv.rduvcore) == [0, 0]   # both meshes are linear
+        assert list(sv.svgrp) == [1, 2, 3]   # infchk == 'not': group == pc1 (<=10)
+        assert list(sv.svinf) == [0, 0, 0]
+        assert sv.temp == 310.0
+        assert abs(sv.kT - 310.0 * 8.314510e-3 / 4.184) < 1e-12
+        np.testing.assert_allclose(sv.wgtsln, [1.0])   # single file -> weight 1.0
+        np.testing.assert_allclose(sv.wgtref, [1.0])
+        print("test_defcond_merge_two_species OK")
+
+
 if __name__ == '__main__':
     test_datread_merge_single_species()
+    test_defcond_merge_two_species()
     print("ALL OK")

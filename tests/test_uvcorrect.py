@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Integration test for uvcorrect.py (the LJ long-range correction),
-which previously had no test coverage at all (ljlrc == 'not' in every
+which previously had no test coverage at all (ljlrc is False in every
 other test). Writes small synthetic SltInfo/MolPrm1/parameters_er
 files to a temp directory."""
 import math
@@ -100,7 +100,7 @@ def test_ljcorrect_updates_aveuv_once():
         sv.nummol = np.array([10.0])
         sv.avevolume = 20000.0
         sv.aveuv = np.array([1.0])
-        sv.uvread = 'not'   # so ljcorrect doesn't also touch sv.blockuv
+        sv.uvread = False   # so ljcorrect doesn't also touch sv.blockuv
 
         cs = SfeCalcState()
         ljcorrect(sv, cs.lj_state, cntrun=1)

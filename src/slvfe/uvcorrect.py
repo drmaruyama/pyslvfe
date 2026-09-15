@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Port of the `uvcorrect` module (sfecorrect.F90): the Lennard-Jones
-long-range correction, applied only when ``ljlrc == 'yes'``.
+long-range correction, applied only when ``ljlrc``.
 
 Species indexing convention in this file:
     - `ljtype[:, 0]`      -> solute sites
@@ -105,7 +105,7 @@ def ljcorrect(sv: SysVars, st: LJState, cntrun: int) -> None:
         st.first_time = False
 
     sv.aveuv[:numslv] += st.ljcorr[:numslv]
-    if sv.uvread != 'not' and sv.clcond == 'merge':
+    if sv.uvread and sv.clcond == 'merge':
         sv.blockuv[1:numslv + 1, cntrun - 1] += st.ljcorr[:numslv]
         sv.blockuv[0, cntrun - 1] += st.ljcorr[:numslv].sum()
 

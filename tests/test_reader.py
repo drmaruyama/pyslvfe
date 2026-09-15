@@ -64,9 +64,9 @@ def test_datread_merge_single_species():
         sv.refdnspf = 'engref'
         sv.slncorpf = 'corsln'
         sv.refcorpf = 'corref'
-        sv.slncor = 'not'
-        sv.uvread = 'not'
-        sv.refmerge = 'yes'
+        sv.slncor = False
+        sv.uvread = False
+        sv.refmerge = True
         sv.maxsln = 2
         sv.maxref = 1
         sv.numrun = 1
@@ -126,13 +126,13 @@ def test_defcond_merge_two_species():
         sv.solndirec = str(soln)
         sv.refsdirec = str(refs)
         sv.slndnspf = 'engsln'
-        sv.slncor = 'not'
-        sv.uvread = 'not'
-        sv.slfslt = 'not'
-        sv.infchk = 'not'
-        sv.meshread = 'not'
-        sv.readwgtfl = 'yes'
-        sv.refmerge = 'yes'
+        sv.slncor = False
+        sv.uvread = False
+        sv.slfslt = False
+        sv.infchk = False
+        sv.meshread = False
+        sv.readwgtfl = True
+        sv.refmerge = True
         sv.suffix_of_engsln_is_tt = False
         sv.suffix_of_engref_is_tt = False
         sv.numsln = 1
@@ -148,7 +148,7 @@ def test_defcond_merge_two_species():
         assert sv.numslv == 2
         assert list(sv.rduvmax) == [4, 4]
         assert list(sv.rduvcore) == [0, 0]   # both meshes are linear
-        assert list(sv.svgrp) == [1, 2, 3]   # infchk == 'not': group == pc1 (<=10)
+        assert list(sv.svgrp) == [1, 2, 3]   # infchk is False: group == pc1 (<=10)
         assert list(sv.svinf) == [0, 0, 0]
         assert sv.temp == 310.0
         assert abs(sv.kT - 310.0 * 8.314510e-3 / 4.184) < 1e-12

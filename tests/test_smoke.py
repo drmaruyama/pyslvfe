@@ -9,24 +9,24 @@ from slvfe.sfecalc import SfeCalcState, chmpot
 from slvfe.output import OutputState, wrtresl
 
 
-def build_synthetic(numslv=1, ermax=6, slncor='not'):
+def build_synthetic(numslv=1, ermax=6, slncor=False):
     sv = SysVars()
     sv.numslv = numslv
     sv.ermax = ermax
     sv.clcond = 'basic'
     sv.slncor = slncor
-    sv.uvread = 'not'
-    sv.slfslt = 'not'
-    sv.ljlrc = 'not'
-    sv.infchk = 'not'
-    sv.normalize = 'not'
-    sv.showdst = 'not'
-    sv.cumuint = 'not'
+    sv.uvread = False
+    sv.slfslt = False
+    sv.ljlrc = False
+    sv.infchk = False
+    sv.normalize = False
+    sv.showdst = False
+    sv.cumuint = False
     sv.invmtrx = 'reg'
     sv.zerosft = 'eczr'
     sv.functional = 'pyhnc'
     sv.wgtfnform = 'harm'
-    sv.wgtf2smpl = 'yes'
+    sv.wgtf2smpl = True
     sv.extsln = 'lin'
     sv.temp = 300.0
     sv.kT = sv.temp * 8.314510e-3 / 4.184
@@ -46,7 +46,7 @@ def build_synthetic(numslv=1, ermax=6, slncor='not'):
     sv.rddns = np.array([0.05, 0.40, 0.90, 0.95, 0.45, 0.08])
 
     rng = np.random.default_rng(0)
-    if slncor == 'yes':
+    if slncor:
         A = rng.normal(size=(ermax, ermax))
         sv.rdslc = np.diag(sv.rddst) + 0.01 * (A + A.T)
     A2 = rng.normal(size=(ermax, ermax))
@@ -64,7 +64,7 @@ def build_synthetic(numslv=1, ermax=6, slncor='not'):
     sv.norm_error = 1.0e-8
     sv.itrmax = 100
     sv.et = 0.0
-    sv.wrtzrsft = 'not'
+    sv.wrtzrsft = False
     sv.write_mesherror = 'not'
     sv.mesherr = 0.1
     return sv
@@ -78,7 +78,7 @@ def run(slncor):
     print("gemax =", cs.gemax)
     print("slncv =", cs.slncv)
     print("inscv =", cs.inscv)
-    if slncor == 'yes':
+    if slncor:
         print("sdrcv =", cs.sdrcv)
     print("chmpt (per-species, total) =", sv.chmpt[:, 0, 0])
 
@@ -98,19 +98,19 @@ def build_synthetic_merge(numslv=2, numrun=2, prmmax=2):
     sv.numslv = numslv
     sv.ermax = ermax
     sv.clcond = 'merge'
-    sv.slncor = 'not'
-    sv.uvread = 'not'
-    sv.slfslt = 'not'
-    sv.ljlrc = 'not'
-    sv.infchk = 'not'
-    sv.normalize = 'not'
-    sv.showdst = 'not'
-    sv.cumuint = 'not'
+    sv.slncor = False
+    sv.uvread = False
+    sv.slfslt = False
+    sv.ljlrc = False
+    sv.infchk = False
+    sv.normalize = False
+    sv.showdst = False
+    sv.cumuint = False
     sv.invmtrx = 'reg'
     sv.zerosft = 'eczr'
     sv.functional = 'pyhnc'
     sv.wgtfnform = 'harm'
-    sv.wgtf2smpl = 'yes'
+    sv.wgtf2smpl = True
     sv.extsln = 'lin'
     sv.temp = 300.0
     sv.kT = sv.temp * 8.314510e-3 / 4.184
@@ -145,7 +145,7 @@ def build_synthetic_merge(numslv=2, numrun=2, prmmax=2):
     sv.norm_error = 1.0e-8
     sv.itrmax = 100
     sv.et = 0.0
-    sv.wrtzrsft = 'not'
+    sv.wrtzrsft = False
     sv.write_mesherror = 'not'
     sv.mesherr = 0.1
     return sv
@@ -167,6 +167,6 @@ def run_merge():
 
 
 if __name__ == '__main__':
-    run('not')
-    run('yes')
+    run(False)
+    run(True)
     run_merge()
